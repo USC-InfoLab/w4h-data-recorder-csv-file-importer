@@ -9,6 +9,7 @@ import pytest
 from w4h_data_recorder_csv_file_importer.__main__ import main
 from w4h_data_recorder_csv_file_importer.csv_import import CHUNK_SIZE, import_all, import_signal
 from w4h_data_recorder_csv_file_importer.manifest import load_manifest
+from w4h_data_recorder_csv_file_importer.e4_connect import inspect_e4_connect, iso_utc
 from w4h_data_recorder_csv_file_importer.mapping import plan_directory, plan_files
 from w4h_data_recorder_csv_file_importer.profile import infer_type
 from w4h_data_recorder_csv_file_importer.reconcile import reconcile_manifest
@@ -70,6 +71,75 @@ def test_plan_maps_e4_shapes(data_dir):
 def test_plan_output_needs_no_corrections(data_dir):
     review = reconcile_manifest(plan_directory(data_dir))
     assert review["errors"] == [] and review["corrections"] == []
+
+
+def test_e4_connect_inspects_headerless_files():
+    folder = FIXTURES / "e4_connect"
+    acc = inspect_e4_connect(folder / "ACC.csv")
+    assert acc["kind"] == "acc" and acc["hz"] == 32.0
+    ibi = inspect_e4_connect(folder / "IBI.csv")
+    assert ibi["kind"] == "ibi" and ibi["hz"] is None
+    assert inspect_e4_connect(FIXTURES / "hr.csv") is None
+
+
+def test_plan_e4_connect_session_folder(tmp_path):
+    session = tmp_path / "1517933194_A01F11"
+    session.mkdir()
+    for name in ("ACC.csv", "HR.csv", "EDA.csv", "IBI.csv"):
+        shutil.copy(FIXTURES / "e4_connect" / name, session / name)
+    manifest = plan_directory(session)
+    review = reconcile_manifest(manifest)
+    assert review["errors"] == []
+    slugs = {s["slug"]: s for s in manifest["signals"]}
+    assert slugs["acc"]["matched_shape"] == "e4_connect_acc"
+    assert slugs["acc"]["sampling_interval"] == "32Hz"
+    assert slugs["acc"]["geomts_mapping"]["time"] == {"column": "timestamp"}
+    assert slugs["ibi"]["matched_shape"] == "e4_connect_ibi"
+    client = FakeClient()
+    import_signal(client, "ds", slugs["acc"], session)
+    row = client.imports[0][1]["rows"][0]
+    assert row["subject_id"] == "1517933194_A01F11"
+    assert row["x"] == "27"
+    assert row["timestamp"] == iso_utc(1380399004.0)
+    assert client.imports[0][1]["table_prefix"] == "recorder"
+    ibi_client = FakeClient()
+    import_signal(ibi_client, "ds", slugs["ibi"], session)
+    ibi_row = ibi_client.imports[0][1]["rows"][0]
+    assert ibi_row["ibi"] == "0.875000"
+    assert ibi_row["timestamp"] == iso_utc(1381290418.0 + 7.734375)
+
+
+def test_plan_nested_physionet_style_connect(tmp_path):
+    path = tmp_path / "STRESS" / "S01" / "ACC.csv"
+    path.parent.mkdir(parents=True)
+    shutil.copy(FIXTURES / "e4_connect" / "ACC.csv", path)
+    manifest = plan_directory(tmp_path)
+    sig = manifest["signals"][0]
+    assert sig["file"] == "STRESS/S01/ACC.csv"
+    assert sig["matched_shape"] == "e4_connect_acc"
+    client = FakeClient()
+    import_signal(client, "ds", sig, tmp_path)
+    assert client.imports[0][1]["rows"][0]["subject_id"] == "S01"
+
+
+def test_pain_prediction_merged_csv_synthesizes_time():
+    path = FIXTURES / "pain" / "pain_dataset.csv"
+    manifest = plan_files([path])
+    sig = manifest["signals"][0]
+    assert sig["matched_shape"] == "e4_pain_merged"
+    assert sig["time_from_row"] is True
+    assert sig["sampling_interval"] == "4Hz"
+    assert sig["geomts_mapping"]["subject"] == "person_id"
+    names = [v["name"] for v in sig["geomts_mapping"]["values"]]
+    assert names == ["acc_x", "acc_y", "acc_z", "eda", "bvp", "hr_bpm", "temp_c", "pain_scale"]
+    assert reconcile_manifest(manifest)["errors"] == []
+    client = FakeClient()
+    import_signal(client, "ds", sig, path.parent, csv_path=path)
+    rows = client.imports[0][1]["rows"]
+    assert rows[0]["person_id"] == "P1"
+    assert rows[0]["datetime"] == iso_utc(0.0)
+    assert rows[1]["datetime"] == iso_utc(0.25)
+    assert rows[2]["person_id"] == "P2"
 
 
 def test_galaxy_ppg_header_uses_parent_folder_as_subject(tmp_path):

@@ -7,6 +7,7 @@ from typing import Iterator
 
 from .client import W4HClient
 from .config import SOURCE_NAME, TABLE_PREFIX
+from .e4_connect import count_e4_connect_rows, inspect_e4_connect, iso_utc, iter_e4_connect_rows
 from .mapping import subject_label
 from .shapes import keep_row
 
@@ -35,9 +36,11 @@ def iter_csv_rows(
     delimiter: str = ",",
     columns: list[dict] | None = None,
     fill: dict | None = None,
+    time_from_row: dict | None = None,
 ) -> Iterator[list[dict]]:
     columns = columns or []
     fill = fill or {}
+    row_index = 0
     with csv_path.open(newline="", encoding="utf-8-sig") as f:
         reader = csv.reader(f, delimiter=delimiter)
         headers = [h.strip() for h in next(reader, [])]
@@ -49,6 +52,12 @@ def iter_csv_rows(
             for key, value in fill.items():
                 if not str(row.get(key, "")).strip():
                     row[key] = value
+            if time_from_row:
+                col = time_from_row["column"]
+                interval = float(time_from_row["interval_seconds"])
+                t0 = float(time_from_row.get("t0") or 0.0)
+                row[col] = iso_utc(t0 + row_index * interval)
+            row_index += 1
             chunk.append(row)
             if len(chunk) >= chunk_size:
                 yield chunk
@@ -76,13 +85,17 @@ def import_signal(
     signal_count: int = 1,
 ) -> dict:
     slug = signal["slug"]
-    csv_path = (csv_path or Path(data_dir) / Path(signal["file"]).name).resolve()
+    csv_path = (csv_path or Path(data_dir) / signal["file"]).resolve()
     if not csv_path.is_file():
         raise FileNotFoundError(f"CSV missing for signal {slug!r}: {csv_path}")
 
     delimiter = signal.get("delimiter", ",")
+    connect = inspect_e4_connect(csv_path) or signal.get("e4_connect")
     try:
-        total_rows = count_csv_rows(csv_path, delimiter)
+        if connect:
+            total_rows = count_e4_connect_rows(csv_path, connect)
+        else:
+            total_rows = count_csv_rows(csv_path, delimiter)
     except (OSError, csv.Error, UnicodeDecodeError):
         total_rows = None  # progress is cosmetic; don't fail the import over it
     total_chunks = -(-total_rows // CHUNK_SIZE) if total_rows else None
@@ -96,12 +109,29 @@ def import_signal(
         field = (mapping.get("subject") or "subject_id")
         fill[field] = subject_label(csv_path, data_dir)
 
+    time_from_row = None
+    if signal.get("time_from_row"):
+        time_map = mapping.get("time") or {}
+        time_from_row = {
+            "column": time_map.get("column") or "datetime",
+            "interval_seconds": signal.get("time_interval_seconds") or 0.25,
+            "t0": 0.0,
+        }
+
+    if connect:
+        rows_iter = iter_e4_connect_rows(csv_path, connect, CHUNK_SIZE, fill=fill)
+    else:
+        rows_iter = iter_csv_rows(
+            csv_path,
+            delimiter=delimiter,
+            columns=signal.get("columns") or [],
+            fill=fill,
+            time_from_row=time_from_row,
+        )
+
     total_inserted = total_skipped = rows_done = 0
     last_physical: dict = {}
-    for chunk_index, chunk in enumerate(
-        iter_csv_rows(csv_path, delimiter=delimiter, columns=signal.get("columns") or [], fill=fill),
-        start=1,
-    ):
+    for chunk_index, chunk in enumerate(rows_iter, start=1):
         payload = {
             "signal": slug,
             "table_prefix": TABLE_PREFIX,

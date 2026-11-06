@@ -1,9 +1,11 @@
 # Test contract + live-run sample for this module.
 # Automated tests and in-app Run / ./run.sh use the tiny synthetic fixtures
-# below. They follow Empatica E4 headers from these Kaggle datasets — do not
+# below. They follow Empatica E4 headers from these public datasets — do not
 # copy those downloads into git:
 #   https://www.kaggle.com/datasets/priyankraval/nurse-stress-prediction-wearable-sensors
 #   https://www.kaggle.com/datasets/mahdiesoltani/galaxyppg
+#   https://www.kaggle.com/datasets/omprakashyadav45/pain-prediction-dataset-emphatica-e4
+#   https://www.empatica.com/blog/decoding-wearable-sensor-signals-what-to-expect-from-your-e4-data/
 
 slug: w4h-data-recorder-csv-file-importer
 kind: ingest
@@ -39,3 +41,4 @@ inputs:
   - key: files
     type: files
     required: false
+    summary: Empatica E4 recorder files. Connect exports or headered research CSVs.

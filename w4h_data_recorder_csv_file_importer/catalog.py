@@ -4,18 +4,31 @@ from .shapes import canonicalize_header
 
 TITLE = "Data recorder CSV import"
 DESCRIPTION = (
-    "Empatica E4 physiological data-recorder CSVs (merged or per signal). "
-    "Review each signal before importing. Kaggle samples are cited in the README; "
-    "this package does not ship those files."
+    "Empatica E4 physiological CSVs: E4 Connect (no header), merged research "
+    "exports, and per-signal files. Review each signal before importing. "
+    "Kaggle and PhysioNet samples are cited in the README; this package does "
+    "not ship those files."
 )
 
 _NURSE = "https://www.kaggle.com/datasets/priyankraval/nurse-stress-prediction-wearable-sensors"
 _GALAXY = "https://www.kaggle.com/datasets/mahdiesoltani/galaxyppg"
+_PAIN = "https://www.kaggle.com/datasets/omprakashyadav45/pain-prediction-dataset-emphatica-e4"
+_CONNECT = (
+    "https://www.empatica.com/blog/decoding-wearable-sensor-signals-what-to-expect-from-your-e4-data/"
+)
 
 _ACC_VALUES = {
     "x": {"name": "acc_x", "description": "Accelerometer X", "unit": "g"},
     "y": {"name": "acc_y", "description": "Accelerometer Y", "unit": "g"},
     "z": {"name": "acc_z", "description": "Accelerometer Z", "unit": "g"},
+    "accx": {"name": "acc_x", "description": "Accelerometer X", "unit": "g"},
+    "accy": {"name": "acc_y", "description": "Accelerometer Y", "unit": "g"},
+    "accz": {"name": "acc_z", "description": "Accelerometer Z", "unit": "g"},
+}
+_CONNECT_ACC_VALUES = {
+    "x": {"name": "acc_x", "description": "Accelerometer X (raw; 64 ≈ 1 g)", "unit": "1/64 g"},
+    "y": {"name": "acc_y", "description": "Accelerometer Y (raw; 64 ≈ 1 g)", "unit": "1/64 g"},
+    "z": {"name": "acc_z", "description": "Accelerometer Z (raw; 64 ≈ 1 g)", "unit": "1/64 g"},
 }
 _HR_VALUES = {"hr": {"name": "hr_bpm", "description": "Heart rate", "unit": "bpm"}}
 _EDA_VALUES = {"eda": {"name": "eda", "description": "Electrodermal activity", "unit": "µS"}}
@@ -25,9 +38,13 @@ _IBI_VALUES = {"ibi": {"name": "ibi", "description": "Inter-beat interval", "uni
 
 _COLUMNS = {
     "id": {"description": "Wearer or session id."},
+    "personid": {"description": "Wearer id (pain-prediction merge uses person_ID)."},
+    "person_id": {"description": "Wearer id (pain-prediction merge uses person_ID)."},
     "subjectid": {"description": "Wearer id taken from the file path when the CSV has no id column."},
     "datetime": {"description": "Sample time."},
-    "timestamp": {"description": "Sample time. GalaxyPPG E4 files use Unix microseconds."},
+    "timestamp": {"description": "Sample time. GalaxyPPG uses Unix microseconds; E4 Connect is UTC ISO."},
+    "painscale": {"description": "Subjective pain rating on the merged pain-prediction export."},
+    "pain_scale": {"description": "Subjective pain rating on the merged pain-prediction export."},
     "hr": {"description": "Heart rate.", "unit": "bpm"},
     "eda": {"description": "Electrodermal activity.", "unit": "µS"},
     "temp": {"description": "Skin temperature.", "unit": "°C"},
@@ -58,6 +75,21 @@ SHAPES: dict[str, dict] = {
         "Header from the Kaggle nurse-stress wearable merge.",
         _NURSE,
         {**_ACC_VALUES, **_EDA_VALUES, **_HR_VALUES, **_TEMP_VALUES},
+    ),
+    "e4_pain_merged": _shape(
+        "Empatica E4 channels aligned at 4 Hz in one CSV (acc_x/y/z, eda, bvp, hr, temp) "
+        "plus person_ID. The Kaggle pain-prediction file has no clock column; timestamps "
+        "are synthesized at 4 Hz from row order.",
+        _PAIN,
+        {
+            **_ACC_VALUES,
+            **_EDA_VALUES,
+            **_BVP_VALUES,
+            **_HR_VALUES,
+            **_TEMP_VALUES,
+            "painscale": {"name": "pain_scale", "description": "Subjective pain rating"},
+        },
+        "4Hz",
     ),
     "recorder_acc": _shape(
         "Empatica E4 accelerometer with an id and datetime column (tidy split of the nurse-stress merge).",
@@ -91,6 +123,41 @@ SHAPES: dict[str, dict] = {
     "e4_temp": _shape("Empatica E4 skin temperature (GalaxyPPG header: timestamp, temp).", _GALAXY, _TEMP_VALUES, "4Hz"),
     "e4_bvp": _shape("Empatica E4 blood volume pulse (GalaxyPPG header: timestamp, bvp).", _GALAXY, _BVP_VALUES, "64Hz"),
     "e4_ibi": _shape("Empatica E4 inter-beat interval (GalaxyPPG header: timestamp, ibi).", _GALAXY, _IBI_VALUES),
+    "e4_connect_acc": _shape(
+        "Empatica E4 Connect accelerometer (no header: unix t0, 32 Hz, then x,y,z raw counts).",
+        _CONNECT,
+        _CONNECT_ACC_VALUES,
+        "32Hz",
+    ),
+    "e4_connect_hr": _shape(
+        "Empatica E4 Connect heart rate (no header: unix t0, 1 Hz, then bpm).",
+        _CONNECT,
+        _HR_VALUES,
+        "1s",
+    ),
+    "e4_connect_eda": _shape(
+        "Empatica E4 Connect electrodermal activity (no header: unix t0, 4 Hz, then µS).",
+        _CONNECT,
+        _EDA_VALUES,
+        "4Hz",
+    ),
+    "e4_connect_temp": _shape(
+        "Empatica E4 Connect skin temperature (no header: unix t0, 4 Hz, then °C).",
+        _CONNECT,
+        _TEMP_VALUES,
+        "4Hz",
+    ),
+    "e4_connect_bvp": _shape(
+        "Empatica E4 Connect blood volume pulse (no header: unix t0, 64 Hz, then PPG).",
+        _CONNECT,
+        _BVP_VALUES,
+        "64Hz",
+    ),
+    "e4_connect_ibi": _shape(
+        "Empatica E4 Connect inter-beat interval (row 1 is t0, IBI; later rows are offset, ibi).",
+        _CONNECT,
+        _IBI_VALUES,
+    ),
 }
 
 

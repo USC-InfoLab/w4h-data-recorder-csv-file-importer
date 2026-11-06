@@ -9,6 +9,8 @@ import csv
 import re
 from pathlib import Path
 
+from .e4_connect import inspect_e4_connect
+
 DELIMITERS = [",", "\t", ";"]
 PREVIEW_ROWS = 20
 # Tolerates a few blanks/typos in real-world CSVs: a type wins when this share of
@@ -56,8 +58,21 @@ def detect_delimiter(header_line: str) -> str:
     return max(DELIMITERS, key=lambda d: header_line.count(d))
 
 
-def profile_csv(path: Path) -> dict:
-    """Header, delimiter and inferred types from the first PREVIEW_ROWS data rows."""
+def profile_csv(path: Path, name: str | None = None) -> dict:
+    """Header, delimiter and inferred types from the first PREVIEW_ROWS data rows.
+
+    E4 Connect files have no header row; synthetic headers and types come from
+    ``inspect_e4_connect``.
+    """
+    connect = inspect_e4_connect(path)
+    if connect:
+        return {
+            "name": name or Path(path).name,
+            "delimiter": connect.get("delimiter", ","),
+            "headers": connect["headers"],
+            "inferred_types": connect["types"],
+            "e4_connect": connect,
+        }
     with Path(path).open(newline="", encoding="utf-8-sig") as f:
         first = f.readline()
         delimiter = detect_delimiter(first)
@@ -69,7 +84,7 @@ def profile_csv(path: Path) -> dict:
         infer_type([row[i] if i < len(row) else "" for row in preview]) for i in range(len(headers))
     ]
     return {
-        "name": Path(path).name,
+        "name": name or Path(path).name,
         "delimiter": delimiter,
         "headers": headers,
         "inferred_types": inferred,

@@ -17,8 +17,10 @@ from .shapes import (
     NOT_SUBJECT,
     NOT_VALUES,
     PREFERRED_COLUMNS,
+    SHAPES,
     SUBJECT_CANON,
     canonicalize_header,
+    discover_csv_files,
     matched_shape,
 )
 
@@ -82,6 +84,10 @@ def subject_label(csv_path: Path, data_dir: Path) -> str:
     for part in reversed(rel.parts[:-1]):
         if part.lower() not in _SKIP_DIRS and not part.startswith("."):
             return part
+    # E4 Connect ZIP extract: files sit in the session folder passed as data_dir.
+    data_name = Path(data_dir).name
+    if data_name and data_name.lower() not in _SKIP_DIRS and not data_name.startswith("."):
+        return data_name
     return path.stem
 
 
@@ -180,9 +186,42 @@ def build_signal(profile: dict) -> dict:
     }
     if injected:
         signal["subject_from_file"] = True
-    shape = matched_shape(profile["headers"])
+    connect = profile.get("e4_connect")
+    shape = (connect or {}).get("shape") or matched_shape(profile["headers"])
     if shape:
         signal["matched_shape"] = shape
+    if connect:
+        signal["e4_connect"] = {
+            "kind": connect["kind"],
+            "t0": connect["t0"],
+            "hz": connect.get("hz"),
+            "delimiter": connect.get("delimiter", ","),
+        }
+    spec = SHAPES.get(shape or "") or {}
+    interval = spec.get("inject_time_seconds")
+    if interval and time is None:
+        time_name = "datetime"
+        if time_name in seen:
+            time_name = "datetime_2"
+        columns.append({
+            "name": time_name,
+            "type": "timestamp",
+            "description": "Synthesized from row order (source CSV has no clock column).",
+            "injected": True,
+        })
+        mapping["time"] = {"column": time_name}
+        signal["time_from_row"] = True
+        signal["time_interval_seconds"] = interval
+        signal["dedupe_columns"] = [c for c in [subject, time_name] if c]
+        used.add(time_name)
+        values = [
+            {"source": c["name"], "name": c["name"], "type": c["type"], "description": ""}
+            for c in columns
+            if c["name"] not in used
+            and c["type"] in _NUMERIC
+            and canon_of.get(c["name"]) not in NOT_VALUES
+        ]
+        mapping["values"] = values
     return signal
 
 
@@ -216,8 +255,19 @@ def plan_files(csv_files: list[Path]) -> dict:
 
 
 def plan_directory(data_dir: Path) -> dict:
-    """Profile every *.csv in data_dir and return a draft manifest (nothing written)."""
-    csv_files = sorted(Path(data_dir).glob("*.csv"))
+    """Profile CSVs in data_dir (top-level plus nested E4 Connect channel files)."""
+    data_dir = Path(data_dir)
+    csv_files = discover_csv_files(data_dir)
     if not csv_files:
         raise FileNotFoundError(f"No .csv files found in {data_dir}")
-    return plan_files(csv_files)
+    profiles = []
+    for path in csv_files:
+        try:
+            rel = str(path.resolve().relative_to(data_dir.resolve()))
+        except ValueError:
+            rel = path.name
+        profiles.append(profile_csv(path, name=rel))
+    empty = [p["name"] for p in profiles if not p["headers"]]
+    if empty:
+        raise ValueError(f"Empty or headerless CSV file(s): {', '.join(empty)}")
+    return build_manifest(profiles)
