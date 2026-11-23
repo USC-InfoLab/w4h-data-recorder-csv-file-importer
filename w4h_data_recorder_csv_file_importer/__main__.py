@@ -37,6 +37,16 @@ def _print_plan(manifest: dict, review: dict) -> None:
         print(f"ERROR {e}")
 
 
+def _unwrap_drop(data_dir: Path) -> Path:
+    """A dropped folder arrives as one wrapper dir ("Export/hr.csv"): plan from inside it."""
+    while not any(data_dir.glob("*.csv")):
+        subdirs = [d for d in data_dir.iterdir() if d.is_dir() and not d.name.startswith(".")]
+        if len(subdirs) != 1:
+            break
+        data_dir = subdirs[0]
+    return data_dir
+
+
 def _resolve_sources(args) -> tuple[Path, dict, bool]:
     """Return (data_dir, planned_manifest_or_None, write_sidecar).
 
@@ -52,7 +62,8 @@ def _resolve_sources(args) -> tuple[Path, dict, bool]:
             and getattr(args, "command", None) == "import"
             and not (data_dir / "manifest.yaml").is_file()
         ):
-            return data_dir, plan_directory(data_dir), False
+            root = _unwrap_drop(data_dir)
+            return root, plan_directory(root), False
         return data_dir, None, True
     source, paths = live_sample_paths()
     print(f"Using live sample from contribution.yaml ({source}):")

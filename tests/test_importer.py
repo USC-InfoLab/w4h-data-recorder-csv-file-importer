@@ -209,3 +209,26 @@ def test_validate_command(data_dir):
     from w4h_data_recorder_csv_file_importer.manifest import write_manifest
     write_manifest(data_dir, manifest)
     assert main(["validate", "--data-dir", str(data_dir)]) == 1
+
+
+def test_in_app_folder_drop_plans_like_flat_files(tmp_path_factory, monkeypatch):
+    """A dropped folder arrives wrapped ("My Export (1)/hr.csv"): plan it like the flat files."""
+    from argparse import Namespace
+
+    from w4h_data_recorder_csv_file_importer.__main__ import _resolve_sources
+
+    names = ("hr.csv", "eda.csv", "temp.csv")
+    flat = tmp_path_factory.mktemp("flat")
+    drop = tmp_path_factory.mktemp("drop")
+    (drop / "My Export (1)").mkdir()
+    for name in names:
+        shutil.copy(FIXTURES / name, flat / name)
+        shutil.copy(FIXTURES / name, drop / "My Export (1)" / name)
+    monkeypatch.setenv("W4H_PLAN_UPLOAD", "1")
+    args = lambda d: Namespace(data_dir=str(d), command="import")  # noqa: E731
+    _, flat_plan, _ = _resolve_sources(args(flat))
+    root, drop_plan, _ = _resolve_sources(args(drop))
+    assert [s["slug"] for s in drop_plan["signals"]] == [s["slug"] for s in flat_plan["signals"]]
+    client = FakeClient()
+    import_all(client, "d1", drop_plan, root)
+    assert client.imports
